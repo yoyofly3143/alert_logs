@@ -41,13 +41,14 @@ func Init(cfg *config.MySQLConfig) error {
 		return fmt.Errorf("连接数据库 %s 失败: %w", cfg.Database, err)
 	}
 
-	// 自动迁移表结构（新增字段会自动 ALTER TABLE）
+	// 自动迁移表结构（新增字段和联合索引会自动处理）
 	if err := DB.AutoMigrate(&models.Alert{}); err != nil {
 		return fmt.Errorf("表结构迁移失败: %w", err)
 	}
 
-	// 兼容旧版：尝试删除 fingerprint 上的唯一索引（忽略错误）
-	DB.Exec("DROP INDEX IF EXISTS alerts_fingerprint ON alerts")
+	// 清理旧的单字段索引（如有必要）
+	DB.Exec("DROP INDEX alerts_fingerprint ON alerts")
+	DB.Exec("DROP INDEX IF EXISTS idx_alerts_fingerprint ON alerts")
 
 	return nil
 }

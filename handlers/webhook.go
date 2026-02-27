@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm/clause"
 )
 
 type WebhookHandler struct{}
@@ -69,13 +70,42 @@ func (h *WebhookHandler) HandleWebhook(c *gin.Context) {
 			GroupKey:     payload.GroupKey,
 		}
 
-		if err := db.Create(&alert).Error; err != nil {
-			log.Printf("[Webhook] 存储告警失败 [%d/%d] %s: %v", i+1, len(payload.Alerts), alertname, err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "store failed", "detail": err.Error()})
-			return
+		// 根据状态执行不同逻辑
+		if alert.Status == models.StatusFiring {
+			// Firing 状态：使用 Upsert (ON DUPLICATE KEY UPDATE)
+			// 注意：starts_at 变化会产生新行，starts_at 相同则更新已有行
+			err := db.Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "fingerprint"}, {Name: "starts_at"}},
+				DoUpdates: clause.AssignmentColumns([]string{"status", "severity", "ends_at", "updated_at", "labels", "annotations"}),
+			}).Create(&alert).Error
+
+			if err != nil {
+				log.Printf("[Webhook] Firing 存储失败 [%d/%d] %s: %v", i+1, len(payload.Alerts), alertname, err)
+				continue
+			}
+		} else {
+			// Resolved 状态：更新匹配的 firing 记录
+			result := db.Model(&models.Alert{}).
+				Where("fingerprint = ? AND starts_at = ?", alert.Fingerprint, alert.StartsAt).
+				Updates(map[string]interface{}{
+					"status":     models.StatusResolved,
+					"ends_at":    alert.EndsAt,
+					"updated_at": now,
+				})
+
+			if result.Error != nil {
+				log.Printf("[Webhook] Resolved 更新失败 [%d/%d] %s: %v", i+1, len(payload.Alerts), alertname, result.Error)
+				continue
+			}
+
+			// 如果没找到对应记录（可能直接收到了 resolved），则创建一条
+			if result.RowsAffected == 0 {
+				db.Create(&alert)
+			}
 		}
-		log.Printf("[Webhook] 已存储 [%d/%d] %s | %s | %s | instance=%s",
-			i+1, len(payload.Alerts), alertname, ap.Status, severity, ap.Labels["instance"])
+
+		log.Printf("[Webhook] 处理完成 [%d/%d] %s | %s | %s",
+			i+1, len(payload.Alerts), alertname, ap.Status, severity)
 		stored++
 	}
 

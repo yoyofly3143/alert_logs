@@ -17,7 +17,7 @@ const (
 // Alert 表示从 AlertManager 接收到的一条告警记录（每次push均插入新行）
 type Alert struct {
 	ID          uint64      `gorm:"primaryKey;autoIncrement"         json:"id"`
-	Fingerprint string      `gorm:"size:64;not null;index"           json:"fingerprint"`
+	Fingerprint string      `gorm:"size:64;not null;index:idx_fingerprint_starts,unique"           json:"fingerprint"`
 	Alertname   string      `gorm:"size:255;not null;index"          json:"alertname"`
 	Status      AlertStatus `gorm:"type:varchar(20);not null;index"  json:"status"`
 	Severity    string      `gorm:"size:50;index"                    json:"severity"`
@@ -33,7 +33,7 @@ type Alert struct {
 	Description string `gorm:"type:text"  json:"description"`
 	Runbook     string `gorm:"size:500"   json:"runbook"`
 
-	StartsAt time.Time  `gorm:"not null;index"  json:"starts_at"`
+	StartsAt time.Time  `gorm:"not null;index:idx_fingerprint_starts,unique"  json:"starts_at"`
 	EndsAt   *time.Time `                        json:"ends_at"`
 
 	CreatedAt time.Time `gorm:"autoCreateTime"  json:"created_at"`
