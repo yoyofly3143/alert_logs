@@ -29,30 +29,25 @@ type AlertListResponse struct {
 type AlertListItem struct {
 	ID          uint64             `json:"id"`
 	Fingerprint string             `json:"fingerprint"`
-	Alertname   string             `json:"alertname"`
+	AlertName   string             `json:"alert_name"`
 	Status      models.AlertStatus `json:"status"`
-	Severity    string             `json:"severity"`
+	Instance    string             `json:"instance"`
 	StartsAt    time.Time          `json:"starts_at"`
 	EndsAt      *time.Time         `json:"ends_at,omitempty"`
-	CreatedAt   time.Time          `json:"created_at"`
 	Labels      models.JSONMap     `json:"labels"`
 	Annotations models.JSONMap     `json:"annotations"`
+	RawContent  models.JSONMap     `json:"raw_content,omitempty"`
 }
 
 // GetAlerts returns paginated list of alerts
-// Query params: page, page_size, status, severity, alertname, start_date, end_date
 func (h *AlertHandler) GetAlerts(c *gin.Context) {
 	db := database.GetDB()
 
 	// Pagination
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 || pageSize > 100 {
-		pageSize = 20
-	}
+	if page < 1 { page = 1 }
+	if pageSize < 1 || pageSize > 100 { pageSize = 20 }
 	offset := (page - 1) * pageSize
 
 	// Build query
@@ -62,11 +57,11 @@ func (h *AlertHandler) GetAlerts(c *gin.Context) {
 	if status := c.Query("status"); status != "" {
 		query = query.Where("status = ?", status)
 	}
-	if severity := c.Query("severity"); severity != "" {
-		query = query.Where("severity = ?", severity)
+	if alertname := c.Query("alert_name"); alertname != "" {
+		query = query.Where("alert_name LIKE ?", "%"+alertname+"%")
 	}
-	if alertname := c.Query("alertname"); alertname != "" {
-		query = query.Where("alertname LIKE ?", "%"+alertname+"%")
+	if instance := c.Query("instance"); instance != "" {
+		query = query.Where("instance LIKE ?", "%"+instance+"%")
 	}
 	if startDate := c.Query("start_date"); startDate != "" {
 		if t, err := time.Parse("2006-01-02", startDate); err == nil {
@@ -86,7 +81,7 @@ func (h *AlertHandler) GetAlerts(c *gin.Context) {
 
 	// Get alerts
 	var alerts []models.Alert
-	result := query.Order("created_at DESC").Offset(offset).Limit(pageSize).Find(&alerts)
+	result := query.Order("id DESC").Offset(offset).Limit(pageSize).Find(&alerts)
 	if result.Error != nil {
 		c.JSON(500, gin.H{"error": "Failed to query alerts", "detail": result.Error.Error()})
 		return
@@ -98,14 +93,14 @@ func (h *AlertHandler) GetAlerts(c *gin.Context) {
 		items[i] = AlertListItem{
 			ID:          alert.ID,
 			Fingerprint: alert.Fingerprint,
-			Alertname:   alert.Alertname,
+			AlertName:   alert.AlertName,
 			Status:      alert.Status,
-			Severity:    alert.Severity,
+			Instance:    alert.Instance,
 			StartsAt:    alert.StartsAt,
 			EndsAt:      alert.EndsAt,
-			CreatedAt:   alert.CreatedAt,
 			Labels:      alert.Labels,
 			Annotations: alert.Annotations,
+			RawContent:  alert.RawContent,
 		}
 	}
 
@@ -140,85 +135,58 @@ func (h *AlertHandler) GetAlertByID(c *gin.Context) {
 type AlertStats struct {
 	Total        int64            `json:"total"`
 	ByStatus     []StatusCount    `json:"by_status"`
-	BySeverity   []SeverityCount  `json:"by_severity"`
-	ByAlertname  []AlertnameCount `json:"by_alertname"`
+	ByAlertName  []AlertNameCount `json:"by_alert_name"`
 	RecentFiring int64            `json:"recent_firing"`
 	TodayAlerts  int64            `json:"today_alerts"`
 }
 
-// StatusCount represents count by status
 type StatusCount struct {
 	Status string `json:"status"`
 	Count  int64  `json:"count"`
 }
 
-// SeverityCount represents count by severity
-type SeverityCount struct {
-	Severity string `json:"severity"`
-	Count    int64  `json:"count"`
-}
-
-// AlertnameCount represents count by alertname
-type AlertnameCount struct {
-	Alertname string `json:"alertname"`
+type AlertNameCount struct {
+	AlertName string `json:"alert_name"`
 	Count     int64  `json:"count"`
 }
 
 // GetStats returns alert statistics
 func (h *AlertHandler) GetStats(c *gin.Context) {
 	db := database.GetDB()
-
 	stats := AlertStats{}
 
-	// Total count
 	db.Model(&models.Alert{}).Count(&stats.Total)
 
-	// By status
 	var statusCounts []StatusCount
-	db.Model(&models.Alert{}).Select("status as status, COUNT(*) as count").Group("status").Scan(&statusCounts)
+	db.Model(&models.Alert{}).Select("status, COUNT(*) as count").Group("status").Scan(&statusCounts)
 	stats.ByStatus = statusCounts
 
-	// By severity
-	var severityCounts []SeverityCount
-	db.Model(&models.Alert{}).Select("COALESCE(severity, 'unknown') as severity, COUNT(*) as count").Group("severity").Order("count DESC").Limit(10).Scan(&severityCounts)
-	stats.BySeverity = severityCounts
+	var alertnameCounts []AlertNameCount
+	db.Model(&models.Alert{}).Select("alert_name, COUNT(*) as count").Group("alert_name").Order("count DESC").Limit(10).Scan(&alertnameCounts)
+	stats.ByAlertName = alertnameCounts
 
-	// By alertname (top 10)
-	var alertnameCounts []AlertnameCount
-	db.Model(&models.Alert{}).Select("alertname, COUNT(*) as count").Group("alertname").Order("count DESC").Limit(10).Scan(&alertnameCounts)
-	stats.ByAlertname = alertnameCounts
-
-	// Recent firing (last 24 hours)
 	var recentFiring int64
 	oneDayAgo := time.Now().Add(-24 * time.Hour)
 	db.Model(&models.Alert{}).Where("status = ? AND starts_at >= ?", models.StatusFiring, oneDayAgo).Count(&recentFiring)
 	stats.RecentFiring = recentFiring
 
-	// Today's alerts
 	var todayAlerts int64
 	today := time.Now().Truncate(24 * time.Hour)
-	db.Model(&models.Alert{}).Where("created_at >= ?", today).Count(&stats.TodayAlerts)
+	db.Model(&models.Alert{}).Where("starts_at >= ?", today).Count(&todayAlerts)
 	stats.TodayAlerts = todayAlerts
 
 	c.JSON(200, stats)
 }
 
-// GetSeverities returns all unique severities
+// GetSeverities - Deprecated but keeping for UI compatibility if needed, returns from labels
 func (h *AlertHandler) GetSeverities(c *gin.Context) {
-	db := database.GetDB()
-
-	var severities []string
-	db.Model(&models.Alert{}).Distinct("severity").Pluck("severity", &severities)
-
-	c.JSON(200, gin.H{"severities": severities})
+	c.JSON(200, gin.H{"severities": []string{"critical", "warning", "info"}})
 }
 
 // GetAlertNames returns all unique alert names
 func (h *AlertHandler) GetAlertNames(c *gin.Context) {
 	db := database.GetDB()
-
 	var alertnames []string
-	db.Model(&models.Alert{}).Distinct("alertname").Pluck("alertname", &alertnames)
-
-	c.JSON(200, gin.H{"alertnames": alertnames})
+	db.Model(&models.Alert{}).Distinct("alert_name").Pluck("alert_name", &alertnames)
+	c.JSON(200, gin.H{"alert_names": alertnames})
 }

@@ -14,38 +14,18 @@ const (
 	StatusResolved AlertStatus = "resolved"
 )
 
-// Alert 表示从 AlertManager 接收到的一条告警记录（每次push均插入新行）
+// Alert 严格按照用户要求的 10 个字段建立的表结构
 type Alert struct {
-	ID          uint64      `gorm:"primaryKey;autoIncrement"         json:"id"`
-	Fingerprint string      `gorm:"size:64;not null;index:idx_fingerprint_starts,unique"           json:"fingerprint"`
-	Alertname   string      `gorm:"size:255;not null;index"          json:"alertname"`
-	Status      AlertStatus `gorm:"type:varchar(20);not null;index"  json:"status"`
-	Severity    string      `gorm:"size:50;index"                    json:"severity"`
-
-	// 常用 label 字段（冗余存储，便于查询/排序）
-	Instance string `gorm:"size:255;index"  json:"instance"`
-	Job      string `gorm:"size:255;index"  json:"job"`
-	Cluster  string `gorm:"size:255;index"  json:"cluster"`
-	Env      string `gorm:"size:100;index"  json:"env"`
-
-	// 常用 annotation 字段
-	Summary     string `gorm:"size:1000"  json:"summary"`
-	Description string `gorm:"type:text"  json:"description"`
-	Runbook     string `gorm:"size:500"   json:"runbook"`
-
-	StartsAt time.Time  `gorm:"not null;index:idx_fingerprint_starts,unique"  json:"starts_at"`
-	EndsAt   *time.Time `                        json:"ends_at"`
-
-	CreatedAt time.Time `gorm:"autoCreateTime"  json:"created_at"`
-	UpdatedAt time.Time `gorm:"autoUpdateTime"  json:"updated_at"`
-
-	// 完整的 JSON 字段（保留所有原始数据）
-	Labels      JSONMap `gorm:"type:json;not null"  json:"labels"`
-	Annotations JSONMap `gorm:"type:json"           json:"annotations"`
-
-	GeneratorURL string `gorm:"size:1000"  json:"generator_url"`
-	Receiver     string `gorm:"size:255"   json:"receiver"`
-	GroupKey     string `gorm:"size:500;index"  json:"group_key"`
+	ID          uint64      `gorm:"primaryKey;autoIncrement"                          json:"id"`           // 1. 主键 ID
+	Fingerprint string      `gorm:"size:64;not null;index:idx_fingerprint_starts,unique"            json:"fingerprint"`  // 2. 告警指纹
+	Status      AlertStatus `gorm:"type:varchar(20);not null;index"                   json:"status"`       // 3. 状态
+	AlertName   string      `gorm:"column:alert_name;size:128;not null;index"         json:"alert_name"`   // 4. 告警名称
+	Instance    string      `gorm:"size:128;index"                                    json:"instance"`     // 5. 实例
+	StartsAt    time.Time   `gorm:"type:datetime(3);not null;index:idx_fingerprint_starts,unique" json:"starts_at"`    // 6. 开始时间
+	EndsAt      *time.Time  `gorm:"type:datetime(3)"                                              json:"ends_at"`      // 7. 结束时间
+	Labels      JSONMap     `gorm:"type:json;not null"                                json:"labels"`       // 8. 存储所有标签
+	Annotations JSONMap     `gorm:"type:json"                                         json:"annotations"`  // 9. 存储描述详情
+	RawContent  JSONMap     `gorm:"column:raw_content;type:json"                       json:"raw_content"`  // 10. 原始 JSON 备份
 }
 
 func (Alert) TableName() string {

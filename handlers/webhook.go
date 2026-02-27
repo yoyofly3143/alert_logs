@@ -3,6 +3,7 @@ package handlers
 import (
 	"alert-webhook/database"
 	"alert-webhook/models"
+	"encoding/json"
 	"log"
 	"net/http"
 	"time"
@@ -45,42 +46,33 @@ func (h *WebhookHandler) HandleWebhook(c *gin.Context) {
 			annotations[k] = v
 		}
 
-		alertname := ap.Labels["alertname"]
-		severity := ap.Labels["severity"]
-
 		alert := models.Alert{
-			Fingerprint:  ap.Fingerprint,
-			Alertname:    alertname,
-			Status:       models.AlertStatus(ap.Status),
-			Severity:     severity,
-			Instance:     ap.Labels["instance"],
-			Job:          ap.Labels["job"],
-			Cluster:      ap.Labels["cluster"],
-			Env:          ap.Labels["env"],
-			Summary:      ap.Annotations["summary"],
-			Description:  ap.Annotations["description"],
-			Runbook:      ap.Annotations["runbook_url"],
-			StartsAt:     ap.StartsAt,
-			EndsAt:       ap.EndsAt,
-			CreatedAt:    now,
-			Labels:       labels,
-			Annotations:  annotations,
-			GeneratorURL: ap.GeneratorURL,
-			Receiver:     payload.Receiver,
-			GroupKey:     payload.GroupKey,
+			Fingerprint: ap.Fingerprint,
+			Status:      models.AlertStatus(ap.Status),
+			AlertName:   ap.Labels["alertname"],
+			Instance:    ap.Labels["instance"],
+			StartsAt:    ap.StartsAt,
+			EndsAt:      ap.EndsAt,
+			Labels:      labels,
+			Annotations: annotations,
 		}
+
+		// 存储原始信息
+		rawMap := make(map[string]interface{})
+		rawBytes, _ := json.Marshal(ap)
+		json.Unmarshal(rawBytes, &rawMap)
+		alert.RawContent = rawMap
 
 		// 根据状态执行不同逻辑
 		if alert.Status == models.StatusFiring {
-			// Firing 状态：使用 Upsert (ON DUPLICATE KEY UPDATE)
-			// 注意：starts_at 变化会产生新行，starts_at 相同则更新已有行
+			// Firing 状态：使用 Upsert
 			err := db.Clauses(clause.OnConflict{
 				Columns:   []clause.Column{{Name: "fingerprint"}, {Name: "starts_at"}},
-				DoUpdates: clause.AssignmentColumns([]string{"status", "severity", "ends_at", "updated_at", "labels", "annotations"}),
+				DoUpdates: clause.AssignmentColumns([]string{"status", "ends_at", "labels", "annotations", "raw_content"}),
 			}).Create(&alert).Error
 
 			if err != nil {
-				log.Printf("[Webhook] Firing 存储失败 [%d/%d] %s: %v", i+1, len(payload.Alerts), alertname, err)
+				log.Printf("[Webhook] Firing 存储失败 [%d/%d] %s: %v", i+1, len(payload.Alerts), alert.AlertName, err)
 				continue
 			}
 		} else {
@@ -88,24 +80,23 @@ func (h *WebhookHandler) HandleWebhook(c *gin.Context) {
 			result := db.Model(&models.Alert{}).
 				Where("fingerprint = ? AND starts_at = ?", alert.Fingerprint, alert.StartsAt).
 				Updates(map[string]interface{}{
-					"status":     models.StatusResolved,
-					"ends_at":    alert.EndsAt,
-					"updated_at": now,
+					"status":      models.StatusResolved,
+					"ends_at":     alert.EndsAt,
+					"raw_content": alert.RawContent,
 				})
 
 			if result.Error != nil {
-				log.Printf("[Webhook] Resolved 更新失败 [%d/%d] %s: %v", i+1, len(payload.Alerts), alertname, result.Error)
+				log.Printf("[Webhook] Resolved 更新失败 [%d/%d] %s: %v", i+1, len(payload.Alerts), alert.AlertName, result.Error)
 				continue
 			}
 
-			// 如果没找到对应记录（可能直接收到了 resolved），则创建一条
+			// 如果没找到对应记录，则创建一条
 			if result.RowsAffected == 0 {
 				db.Create(&alert)
 			}
 		}
 
-		log.Printf("[Webhook] 处理完成 [%d/%d] %s | %s | %s",
-			i+1, len(payload.Alerts), alertname, ap.Status, severity)
+		log.Printf("[Webhook] 处理完成 [%d/%d] %s | %s", i+1, len(payload.Alerts), alert.AlertName, ap.Status)
 		stored++
 	}
 
