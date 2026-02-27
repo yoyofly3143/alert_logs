@@ -8,43 +8,46 @@ import (
 
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 var DB *gorm.DB
 
 func Init(cfg *config.MySQLConfig) error {
-	var err error
-
-	log.Printf("[数据库] 正在连接 MySQL %s:%s ...", cfg.Host, cfg.Port)
-
-	// First connect without database to create it if needed
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/?charset=utf8mb4&parseTime=True&loc=Local",
+	// 先连接不带 database 名的 DSN，确保数据库存在
+	dsnNoDB := fmt.Sprintf("%s:%s@tcp(%s:%s)/?charset=utf8mb4&parseTime=True&loc=Local",
 		cfg.User, cfg.Password, cfg.Host, cfg.Port)
 
-	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
+	db, err := gorm.Open(mysql.Open(dsnNoDB), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
 	if err != nil {
-		return fmt.Errorf("failed to connect to MySQL: %w", err)
+		return fmt.Errorf("连接 MySQL 失败: %w", err)
 	}
-	log.Printf("[数据库] MySQL连接成功")
 
-	// Create database if not exists
-	log.Printf("[数据库] 创建数据库: %s", cfg.Database)
-	db.Exec("CREATE DATABASE IF NOT EXISTS " + cfg.Database + " CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci")
+	// 创建数据库（如果不存在）
+	createSQL := fmt.Sprintf(
+		"CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+		cfg.Database)
+	if err := db.Exec(createSQL).Error; err != nil {
+		log.Printf("[数据库] 创建数据库时出现警告（可忽略）: %v", err)
+	}
 
-	// Now connect to the specific database
-	log.Printf("[数据库] 连接数据库: %s", cfg.Database)
-	DB, err = gorm.Open(mysql.Open(cfg.DSN()), &gorm.Config{})
+	// 连接目标数据库
+	DB, err = gorm.Open(mysql.Open(cfg.DSN()), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
 	if err != nil {
-		return fmt.Errorf("failed to connect to database: %w", err)
+		return fmt.Errorf("连接数据库 %s 失败: %w", cfg.Database, err)
 	}
-	log.Printf("[数据库] 数据库连接成功")
 
-	// Auto migrate
-	log.Printf("[数据库] 正在同步表结构...")
+	// 自动迁移表结构（新增字段会自动 ALTER TABLE）
 	if err := DB.AutoMigrate(&models.Alert{}); err != nil {
-		return fmt.Errorf("failed to migrate database: %w", err)
+		return fmt.Errorf("表结构迁移失败: %w", err)
 	}
-	log.Printf("[数据库] 表结构同步完成")
+
+	// 兼容旧版：尝试删除 fingerprint 上的唯一索引（忽略错误）
+	DB.Exec("DROP INDEX IF EXISTS alerts_fingerprint ON alerts")
 
 	return nil
 }
