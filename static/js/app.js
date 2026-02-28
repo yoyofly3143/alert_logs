@@ -17,7 +17,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     setInterval(() => {
         loadStats();
-        loadAlerts(currentPage);
+        loadAlerts(currentPage, true);
     }, 30000);
 });
 
@@ -47,9 +47,6 @@ function showDashboard() {
     initDateDefaults();
     loadStats();
     loadSeverities();
-    loadAlerts(1);
-    initDateDefaults();
-    loadStats();
     loadAlerts(1);
 }
 
@@ -183,9 +180,8 @@ async function loadSeverities() {
         });
     } catch (e) { console.error('severities error', e); }
 }
-}
 
-async function loadAlerts(page = 1) {
+async function loadAlerts(page = 1, silent = false) {
     currentPage = page;
     currentPageSize = parseInt(document.getElementById('pageSizeSelect').value) || 20;
 
@@ -199,17 +195,13 @@ async function loadAlerts(page = 1) {
     if (status) params.append('status', status);
     if (alertname) params.append('alert_name', alertname);
     if (quality) params.append('quality', quality);
-    const alertname = document.getElementById('filterAlertname').value.trim();
-    const startDate = document.getElementById('filterStartDate').value;
-    const endDate = document.getElementById('filterEndDate').value;
-
-    if (status) params.append('status', status);
-    if (alertname) params.append('alert_name', alertname);
     if (startDate) params.append('start_date', startDate);
     if (endDate) params.append('end_date', endDate);
 
     const tbody = document.getElementById('alertTableBody');
-    tbody.innerHTML = `<tr><td colspan="7" class="loading-row"><div class="spinner"></div> 加载中...</td></tr>`;
+    if (!silent) {
+        tbody.innerHTML = `<tr><td colspan="7" class="loading-row"><div class="spinner"></div> 加载中...</td></tr>`;
+    }
 
     try {
         const headers = getAuthHeaders();
