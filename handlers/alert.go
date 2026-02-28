@@ -46,8 +46,12 @@ func (h *AlertHandler) GetAlerts(c *gin.Context) {
 	// Pagination
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
-	if page < 1 { page = 1 }
-	if pageSize < 1 || pageSize > 100 { pageSize = 20 }
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 20
+	}
 	offset := (page - 1) * pageSize
 
 	// Build query
@@ -73,6 +77,9 @@ func (h *AlertHandler) GetAlerts(c *gin.Context) {
 			t = t.Add(24 * time.Hour)
 			query = query.Where("starts_at <= ?", t)
 		}
+	}
+	if quality := c.Query("quality"); quality != "" {
+		query = query.Where("labels->>'$.quality' = ?", quality)
 	}
 
 	// Get total count
