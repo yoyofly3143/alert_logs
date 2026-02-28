@@ -157,29 +157,112 @@ type AlertNameCount struct {
 	Count     int64  `json:"count"`
 }
 
-// GetStats returns alert statistics
 func (h *AlertHandler) GetStats(c *gin.Context) {
 	db := database.GetDB()
 	stats := AlertStats{}
 
-	db.Model(&models.Alert{}).Count(&stats.Total)
+	// Build base query with filters
+	query := db.Model(&models.Alert{})
 
+	// Filters
+	if quality := c.Query("quality"); quality != "" {
+		query = query.Where("labels->>'$.quality' = ?", quality)
+	}
+	if startDate := c.Query("start_date"); startDate != "" {
+		if t, err := time.Parse("2006-01-02", startDate); err == nil {
+			query = query.Where("starts_at >= ?", t)
+		}
+	}
+	if endDate := c.Query("end_date"); endDate != "" {
+		if t, err := time.Parse("2006-01-02", endDate); err == nil {
+			t = t.Add(24 * time.Hour)
+			query = query.Where("starts_at <= ?", t)
+		}
+	}
+
+	// Total count
+	query.Count(&stats.Total)
+
+	// ByStatus with filters
 	var statusCounts []StatusCount
-	db.Model(&models.Alert{}).Select("status, COUNT(*) as count").Group("status").Scan(&statusCounts)
+	db.Model(&models.Alert{}).Select("status, COUNT(*) as count")
+	if quality := c.Query("quality"); quality != "" {
+		db = db.Where("labels->>'$.quality' = ?", quality)
+	}
+	if startDate := c.Query("start_date"); startDate != "" {
+		if t, err := time.Parse("2006-01-02", startDate); err == nil {
+			db = db.Where("starts_at >= ?", t)
+		}
+	}
+	if endDate := c.Query("end_date"); endDate != "" {
+		if t, err := time.Parse("2006-01-02", endDate); err == nil {
+			t = t.Add(24 * time.Hour)
+			db = db.Where("starts_at <= ?", t)
+		}
+	}
+	db.Group("status").Scan(&statusCounts)
 	stats.ByStatus = statusCounts
 
+	// ByAlertName with filters
 	var alertnameCounts []AlertNameCount
-	db.Model(&models.Alert{}).Select("alert_name, COUNT(*) as count").Group("alert_name").Order("count DESC").Limit(10).Scan(&alertnameCounts)
+	db = database.GetDB().Model(&models.Alert{})
+	if quality := c.Query("quality"); quality != "" {
+		db = db.Where("labels->>'$.quality' = ?", quality)
+	}
+	if startDate := c.Query("start_date"); startDate != "" {
+		if t, err := time.Parse("2006-01-02", startDate); err == nil {
+			db = db.Where("starts_at >= ?", t)
+		}
+	}
+	if endDate := c.Query("end_date"); endDate != "" {
+		if t, err := time.Parse("2006-01-02", endDate); err == nil {
+			t = t.Add(24 * time.Hour)
+			db = db.Where("starts_at <= ?", t)
+		}
+	}
+	db.Select("alert_name, COUNT(*) as count").Group("alert_name").Order("count DESC").Limit(10).Scan(&alertnameCounts)
 	stats.ByAlertName = alertnameCounts
 
+	// RecentFiring with filters
 	var recentFiring int64
 	oneDayAgo := time.Now().Add(-24 * time.Hour)
-	db.Model(&models.Alert{}).Where("status = ? AND starts_at >= ?", models.StatusFiring, oneDayAgo).Count(&recentFiring)
+	db = database.GetDB().Model(&models.Alert{})
+	if quality := c.Query("quality"); quality != "" {
+		db = db.Where("labels->>'$.quality' = ?", quality)
+	}
+	if startDate := c.Query("start_date"); startDate != "" {
+		if t, err := time.Parse("2006-01-02", startDate); err == nil {
+			db = db.Where("starts_at >= ?", t)
+		}
+	}
+	if endDate := c.Query("end_date"); endDate != "" {
+		if t, err := time.Parse("2006-01-02", endDate); err == nil {
+			t = t.Add(24 * time.Hour)
+			db = db.Where("starts_at <= ?", t)
+		}
+	}
+	db.Where("status = ? AND starts_at >= ?", models.StatusFiring, oneDayAgo).Count(&recentFiring)
 	stats.RecentFiring = recentFiring
 
+	// TodayAlerts with filters
 	var todayAlerts int64
 	today := time.Now().Truncate(24 * time.Hour)
-	db.Model(&models.Alert{}).Where("starts_at >= ?", today).Count(&todayAlerts)
+	db = database.GetDB().Model(&models.Alert{})
+	if quality := c.Query("quality"); quality != "" {
+		db = db.Where("labels->>'$.quality' = ?", quality)
+	}
+	if startDate := c.Query("start_date"); startDate != "" {
+		if t, err := time.Parse("2006-01-02", startDate); err == nil {
+			db = db.Where("starts_at >= ?", t)
+		}
+	}
+	if endDate := c.Query("end_date"); endDate != "" {
+		if t, err := time.Parse("2006-01-02", endDate); err == nil {
+			t = t.Add(24 * time.Hour)
+			db = db.Where("starts_at <= ?", t)
+		}
+	}
+	db.Where("starts_at >= ?", today).Count(&todayAlerts)
 	stats.TodayAlerts = todayAlerts
 
 	c.JSON(200, stats)
