@@ -46,6 +46,10 @@ function showDashboard() {
     // Initialize dashboard
     initDateDefaults();
     loadStats();
+    loadSeverities();
+    loadAlerts(1);
+    initDateDefaults();
+    loadStats();
     loadAlerts(1);
 }
 
@@ -115,7 +119,7 @@ function handleAuthError(response) {
 function initDateDefaults() {
     const end = new Date();
     const start = new Date();
-    start.setDate(start.getDate() - 7);
+    start.setDate(start.getDate() - 1);
     document.getElementById('filterEndDate').value = fmtDate(end);
     document.getElementById('filterStartDate').value = fmtDate(start);
 }
@@ -163,12 +167,38 @@ async function loadStats() {
     } catch (e) { console.error('stats error', e); }
 }
 
+async function loadSeverities() {
+    try {
+        const headers = getAuthHeaders();
+        const r = await fetch(`${API}/filters/severities`, { headers });
+        if (handleAuthError(r)) return;
+        const d = await r.json();
+        const select = document.getElementById('filterSeverity');
+        select.innerHTML = '<option value="">全部</option>';
+        (d.severities || []).forEach(s => {
+            const opt = document.createElement('option');
+            opt.value = s;
+            opt.textContent = s;
+            select.appendChild(opt);
+        });
+    } catch (e) { console.error('severities error', e); }
+}
+}
+
 async function loadAlerts(page = 1) {
     currentPage = page;
     currentPageSize = parseInt(document.getElementById('pageSizeSelect').value) || 20;
 
     const params = new URLSearchParams({ page, page_size: currentPageSize });
     const status = document.getElementById('filterStatus').value;
+    const alertname = document.getElementById('filterAlertname').value.trim();
+    const quality = document.getElementById('filterSeverity').value;
+    const startDate = document.getElementById('filterStartDate').value;
+    const endDate = document.getElementById('filterEndDate').value;
+
+    if (status) params.append('status', status);
+    if (alertname) params.append('alert_name', alertname);
+    if (quality) params.append('quality', quality);
     const alertname = document.getElementById('filterAlertname').value.trim();
     const startDate = document.getElementById('filterStartDate').value;
     const endDate = document.getElementById('filterEndDate').value;
