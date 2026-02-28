@@ -3,14 +3,13 @@
    =================================================== */
 
 const API = '/api';
+const AUTH_TOKEN_KEY = 'authToken';
 let currentPage = 1;
 let currentPageSize = 20;
 let totalRecords = 0;
 
 document.addEventListener('DOMContentLoaded', () => {
-    initDateDefaults();
-    loadStats();
-    loadAlerts(1);
+    initAuth();
 
     document.getElementById('filterAlertname').addEventListener('keydown', e => {
         if (e.key === 'Enter') loadAlerts(1);
@@ -22,6 +21,97 @@ document.addEventListener('DOMContentLoaded', () => {
     }, 30000);
 });
 
+/* ─── Auth Functions ─── */
+function initAuth() {
+    const token = localStorage.getItem(AUTH_TOKEN_KEY);
+    if (token) {
+        showDashboard();
+    } else {
+        showLogin();
+    }
+}
+
+function showLogin() {
+    document.getElementById('loginPage').classList.add('active');
+    document.getElementById('dashboardContainer').classList.remove('active');
+    
+    // Setup login form handler
+    document.getElementById('loginForm').addEventListener('submit', handleLogin);
+}
+
+function showDashboard() {
+    document.getElementById('loginPage').classList.remove('active');
+    document.getElementById('dashboardContainer').classList.add('active');
+    
+    // Initialize dashboard
+    initDateDefaults();
+    loadStats();
+    loadAlerts(1);
+}
+
+async function handleLogin(e) {
+    e.preventDefault();
+    
+    const username = document.getElementById('username').value;
+    const password = document.getElementById('password').value;
+    const errorEl = document.getElementById('loginError');
+    const btn = document.getElementById('btnLogin');
+    
+    errorEl.classList.remove('active');
+    errorEl.textContent = '';
+    
+    btn.classList.add('loading');
+    btn.disabled = true;
+    
+    try {
+        const response = await fetch(`${API}/auth/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password })
+        });
+        
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.message || '登录失败');
+        }
+        
+        const data = await response.json();
+        localStorage.setItem(AUTH_TOKEN_KEY, data.token);
+        
+        showDashboard();
+        
+        // Clear form
+        document.getElementById('username').value = '';
+        document.getElementById('password').value = '';
+        
+    } catch (err) {
+        errorEl.textContent = err.message;
+        errorEl.classList.add('active');
+    } finally {
+        btn.classList.remove('loading');
+        btn.disabled = false;
+    }
+}
+
+function logout() {
+    localStorage.removeItem(AUTH_TOKEN_KEY);
+    showLogin();
+}
+
+function getAuthHeaders() {
+    const token = localStorage.getItem(AUTH_TOKEN_KEY);
+    return token ? { 'Authorization': `Bearer ${token}` } : {};
+}
+
+function handleAuthError(response) {
+    if (response.status === 401) {
+        logout();
+        return true;
+    }
+    return false;
+}
+
+/* ─── Date & Format Functions ─── */
 function initDateDefaults() {
     const end = new Date();
     const start = new Date();
@@ -49,9 +139,12 @@ function esc(s) {
     return d.innerHTML;
 }
 
+/* ─── API Functions ─── */
 async function loadStats() {
     try {
-        const r = await fetch(`${API}/alerts/stats`);
+        const headers = getAuthHeaders();
+        const r = await fetch(`${API}/alerts/stats`, { headers });
+        if (handleAuthError(r)) return;
         const d = await r.json();
 
         document.getElementById('totalAlerts').textContent = d.total ?? 0;
@@ -89,7 +182,9 @@ async function loadAlerts(page = 1) {
     tbody.innerHTML = `<tr><td colspan="7" class="loading-row"><div class="spinner"></div> 加载中...</td></tr>`;
 
     try {
-        const r = await fetch(`${API}/alerts?${params}`);
+        const headers = getAuthHeaders();
+        const r = await fetch(`${API}/alerts?${params}`, { headers });
+        if (handleAuthError(r)) return;
         const d = await r.json();
 
         totalRecords = d.total || 0;
@@ -103,6 +198,7 @@ async function loadAlerts(page = 1) {
     }
 }
 
+/* ─── Render Functions ─── */
 function renderTable(alerts) {
     const tbody = document.getElementById('alertTableBody');
     if (!alerts.length) {
@@ -149,6 +245,7 @@ function renderPagination(page, pages) {
     el.innerHTML = html;
 }
 
+/* ─── Filter Functions ─── */
 function changePageSize() { loadAlerts(1); }
 function resetFilters() {
     document.getElementById('filterStatus').value = '';
@@ -157,10 +254,13 @@ function resetFilters() {
     loadAlerts(1);
 }
 
+/* ─── Detail Modal ─── */
 async function showDetail(id) {
     openModal('加载中...', '');
     try {
-        const r = await fetch(`${API}/alerts/${id}`);
+        const headers = getAuthHeaders();
+        const r = await fetch(`${API}/alerts/${id}`, { headers });
+        if (handleAuthError(r)) { closeModal(); return; }
         const a = await r.json();
         openModal(a.alert_name, `#${a.id}`);
 
@@ -209,6 +309,14 @@ function openModal(title, subtitle) {
 function closeModal() {
     document.getElementById('modalOverlay').classList.remove('open');
     document.body.style.overflow = '';
+}
+
+function forceRefresh() {
+    const btn = document.getElementById('btnRefresh');
+    btn.classList.add('spinning');
+    loadStats();
+    loadAlerts(currentPage);
+    setTimeout(() => btn.classList.remove('spinning'), 600);
 }
 
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
