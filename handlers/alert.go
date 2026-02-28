@@ -185,9 +185,24 @@ func (h *AlertHandler) GetStats(c *gin.Context) {
 	c.JSON(200, stats)
 }
 
-// GetSeverities - Deprecated but keeping for UI compatibility if needed, returns from labels
 func (h *AlertHandler) GetSeverities(c *gin.Context) {
-	c.JSON(200, gin.H{"severities": []string{"critical", "warning", "info"}})
+	db := database.GetDB()
+	var severities []string
+
+	// Query distinct quality values from labels JSON field
+	result := db.Model(&models.Alert{}).
+		Where("labels IS NOT NULL").
+		Where("JSON_EXTRACT(labels, '$.quality') IS NOT NULL").
+		Where("JSON_EXTRACT(labels, '$.quality') != ''").
+		Distinct("JSON_EXTRACT(labels, '$.quality')").
+		Pluck("JSON_EXTRACT(labels, '$.quality')", &severities)
+
+	if result.Error != nil {
+		c.JSON(500, gin.H{"error": "Failed to query severities", "detail": result.Error.Error()})
+		return
+	}
+
+	c.JSON(200, gin.H{"severities": severities})
 }
 
 // GetAlertNames returns all unique alert names
