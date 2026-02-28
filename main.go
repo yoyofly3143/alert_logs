@@ -4,6 +4,7 @@ import (
 	"alert-webhook/config"
 	"alert-webhook/database"
 	"alert-webhook/handlers"
+	"alert-webhook/middleware"
 	"fmt"
 	"io"
 	"log"
@@ -73,26 +74,33 @@ func main() {
 	alertHandler := handlers.NewAlertHandler()
 
 	// Routes
-	// Webhook endpoint (called by AlertManager)
+	// Webhook endpoint (called by AlertManager) - public
 	r.POST("/webhook", webhookHandler.HandleWebhook)
 
-	// Health check
+	// Health check - public
 	r.GET("/health", webhookHandler.HealthCheck)
 
-	// Web UI
+	// Web UI - public (login page)
 	r.GET("/", func(c *gin.Context) {
 		c.HTML(200, "index.html", nil)
 	})
 
-	// API routes — 注意: 固定路径 /stats 必须在参数路径 /:id 之前注册
+	// API routes
+	// Public API - /api/health
 	api := r.Group("/api")
 	{
 		api.GET("/health", webhookHandler.HealthCheck)
-		api.GET("/alerts/stats", alertHandler.GetStats)        // 必须先注册
-		api.GET("/alerts", alertHandler.GetAlerts)
-		api.GET("/alerts/:id", alertHandler.GetAlertByID)      // 参数路由放后面
-		api.GET("/filters/severities", alertHandler.GetSeverities)
-		api.GET("/filters/alertnames", alertHandler.GetAlertNames)
+	}
+
+	// Protected API routes - all other /api/* require JWT
+	apiProtected := r.Group("/api")
+	apiProtected.Use(middleware.JWTAuth(cfg.JWTSecret))
+	{
+		apiProtected.GET("/alerts/stats", alertHandler.GetStats) // 必须先注册
+		apiProtected.GET("/alerts", alertHandler.GetAlerts)
+		apiProtected.GET("/alerts/:id", alertHandler.GetAlertByID) // 参数路由放后面
+		apiProtected.GET("/filters/severities", alertHandler.GetSeverities)
+		apiProtected.GET("/filters/alertnames", alertHandler.GetAlertNames)
 	}
 
 	// Start server

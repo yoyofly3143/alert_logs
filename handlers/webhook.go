@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm/clause"
@@ -33,7 +32,6 @@ func (h *WebhookHandler) HandleWebhook(c *gin.Context) {
 	log.Printf("[Webhook] 收到告警 %d 条, receiver=%s", len(payload.Alerts), payload.Receiver)
 
 	db := database.GetDB()
-	now := time.Now()
 	stored := 0
 
 	for i, ap := range payload.Alerts {
