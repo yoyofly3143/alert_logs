@@ -72,6 +72,7 @@ func main() {
 	// Initialize handlers
 	webhookHandler := handlers.NewWebhookHandler()
 	alertHandler := handlers.NewAlertHandler()
+	authHandler := handlers.NewAuthHandler()
 
 	// Routes
 	// Webhook endpoint (called by AlertManager) - public
@@ -90,6 +91,7 @@ func main() {
 	api := r.Group("/api")
 	{
 		api.GET("/health", webhookHandler.HealthCheck)
+		api.POST("/auth/login", authHandler.Login)
 	}
 
 	// Protected API routes - all other /api/* require JWT
