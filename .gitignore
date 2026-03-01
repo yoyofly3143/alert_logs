@@ -1,4 +1,6 @@
-# 不要上传编译产物
-build/
 # 不要上传.env文件
 .env
+# 不要上传sisphus
+.sisphus/
+# 不要上传release
+release/

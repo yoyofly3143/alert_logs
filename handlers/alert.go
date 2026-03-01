@@ -79,7 +79,7 @@ func (h *AlertHandler) GetAlerts(c *gin.Context) {
 		}
 	}
 	if quality := c.Query("quality"); quality != "" {
-		query = query.Where("labels->>'$.quality' = ?", quality)
+		query = query.Where("JSON_UNQUOTE(JSON_EXTRACT(labels, '$.quality')) = ?", quality)
 	}
 
 	// Get total count
@@ -142,6 +142,7 @@ func (h *AlertHandler) GetAlertByID(c *gin.Context) {
 type AlertStats struct {
 	Total        int64            `json:"total"`
 	ByStatus     []StatusCount    `json:"by_status"`
+	ByQuality    []QualityCount   `json:"by_quality"`
 	ByAlertName  []AlertNameCount `json:"by_alert_name"`
 	RecentFiring int64            `json:"recent_firing"`
 	TodayAlerts  int64            `json:"today_alerts"`
@@ -150,6 +151,11 @@ type AlertStats struct {
 type StatusCount struct {
 	Status string `json:"status"`
 	Count  int64  `json:"count"`
+}
+
+type QualityCount struct {
+	Quality string `json:"quality"`
+	Count   int64  `json:"count"`
 }
 
 type AlertNameCount struct {
@@ -161,108 +167,65 @@ func (h *AlertHandler) GetStats(c *gin.Context) {
 	db := database.GetDB()
 	stats := AlertStats{}
 
-	// Build base query with filters
-	query := db.Model(&models.Alert{})
-
-	// Filters
-	if quality := c.Query("quality"); quality != "" {
-		query = query.Where("labels->>'$.quality' = ?", quality)
-	}
-	if startDate := c.Query("start_date"); startDate != "" {
-		if t, err := time.Parse("2006-01-02", startDate); err == nil {
-			query = query.Where("starts_at >= ?", t)
+	// Helper function to apply common filters
+	applyFilters := func(query *gorm.DB) *gorm.DB {
+		if status := c.Query("status"); status != "" {
+			query = query.Where("status = ?", status)
 		}
-	}
-	if endDate := c.Query("end_date"); endDate != "" {
-		if t, err := time.Parse("2006-01-02", endDate); err == nil {
-			t = t.Add(24 * time.Hour)
-			query = query.Where("starts_at <= ?", t)
+		if alertname := c.Query("alert_name"); alertname != "" {
+			query = query.Where("alert_name LIKE ?", "%"+alertname+"%")
 		}
+		if quality := c.Query("quality"); quality != "" {
+			query = query.Where("JSON_UNQUOTE(JSON_EXTRACT(labels, '$.quality')) = ?", quality)
+		}
+		if startDate := c.Query("start_date"); startDate != "" {
+			if t, err := time.Parse("2006-01-02", startDate); err == nil {
+				query = query.Where("starts_at >= ?", t)
+			}
+		}
+		if endDate := c.Query("end_date"); endDate != "" {
+			if t, err := time.Parse("2006-01-02", endDate); err == nil {
+				t = t.Add(24 * time.Hour)
+				query = query.Where("starts_at <= ?", t)
+			}
+		}
+		return query
 	}
 
 	// Total count
-	query.Count(&stats.Total)
+	totalQuery := applyFilters(db.Model(&models.Alert{}))
+	totalQuery.Count(&stats.Total)
 
 	// ByStatus with filters
 	var statusCounts []StatusCount
-	db.Model(&models.Alert{}).Select("status, COUNT(*) as count")
-	if quality := c.Query("quality"); quality != "" {
-		db = db.Where("labels->>'$.quality' = ?", quality)
-	}
-	if startDate := c.Query("start_date"); startDate != "" {
-		if t, err := time.Parse("2006-01-02", startDate); err == nil {
-			db = db.Where("starts_at >= ?", t)
-		}
-	}
-	if endDate := c.Query("end_date"); endDate != "" {
-		if t, err := time.Parse("2006-01-02", endDate); err == nil {
-			t = t.Add(24 * time.Hour)
-			db = db.Where("starts_at <= ?", t)
-		}
-	}
-	db.Group("status").Scan(&statusCounts)
+	byStatusQuery := applyFilters(db.Model(&models.Alert{}).Select("status, COUNT(*) as count"))
+	byStatusQuery.Group("status").Scan(&statusCounts)
 	stats.ByStatus = statusCounts
+
+	// ByQuality with filters
+	var qualityCounts []QualityCount
+	byQualityQuery := applyFilters(db.Model(&models.Alert{}).Select("JSON_UNQUOTE(JSON_EXTRACT(labels, '$.quality')) as quality, COUNT(*) as count"))
+	byQualityQuery.Where("JSON_EXTRACT(labels, '$.quality') IS NOT NULL").Group("JSON_EXTRACT(labels, '$.quality')").Scan(&qualityCounts)
+	stats.ByQuality = qualityCounts
 
 	// ByAlertName with filters
 	var alertnameCounts []AlertNameCount
-	db = database.GetDB().Model(&models.Alert{})
-	if quality := c.Query("quality"); quality != "" {
-		db = db.Where("labels->>'$.quality' = ?", quality)
-	}
-	if startDate := c.Query("start_date"); startDate != "" {
-		if t, err := time.Parse("2006-01-02", startDate); err == nil {
-			db = db.Where("starts_at >= ?", t)
-		}
-	}
-	if endDate := c.Query("end_date"); endDate != "" {
-		if t, err := time.Parse("2006-01-02", endDate); err == nil {
-			t = t.Add(24 * time.Hour)
-			db = db.Where("starts_at <= ?", t)
-		}
-	}
-	db.Select("alert_name, COUNT(*) as count").Group("alert_name").Order("count DESC").Limit(10).Scan(&alertnameCounts)
+	byAlertNameQuery := applyFilters(db.Model(&models.Alert{}).Select("alert_name, COUNT(*) as count"))
+	byAlertNameQuery.Group("alert_name").Order("count DESC").Limit(10).Scan(&alertnameCounts)
 	stats.ByAlertName = alertnameCounts
 
 	// RecentFiring with filters
 	var recentFiring int64
 	oneDayAgo := time.Now().Add(-24 * time.Hour)
-	db = database.GetDB().Model(&models.Alert{})
-	if quality := c.Query("quality"); quality != "" {
-		db = db.Where("labels->>'$.quality' = ?", quality)
-	}
-	if startDate := c.Query("start_date"); startDate != "" {
-		if t, err := time.Parse("2006-01-02", startDate); err == nil {
-			db = db.Where("starts_at >= ?", t)
-		}
-	}
-	if endDate := c.Query("end_date"); endDate != "" {
-		if t, err := time.Parse("2006-01-02", endDate); err == nil {
-			t = t.Add(24 * time.Hour)
-			db = db.Where("starts_at <= ?", t)
-		}
-	}
-	db.Where("status = ? AND starts_at >= ?", models.StatusFiring, oneDayAgo).Count(&recentFiring)
+	recentFiringQuery := applyFilters(db.Model(&models.Alert{}))
+	recentFiringQuery.Where("status = ? AND starts_at >= ?", models.StatusFiring, oneDayAgo).Count(&recentFiring)
 	stats.RecentFiring = recentFiring
 
 	// TodayAlerts with filters
 	var todayAlerts int64
 	today := time.Now().Truncate(24 * time.Hour)
-	db = database.GetDB().Model(&models.Alert{})
-	if quality := c.Query("quality"); quality != "" {
-		db = db.Where("labels->>'$.quality' = ?", quality)
-	}
-	if startDate := c.Query("start_date"); startDate != "" {
-		if t, err := time.Parse("2006-01-02", startDate); err == nil {
-			db = db.Where("starts_at >= ?", t)
-		}
-	}
-	if endDate := c.Query("end_date"); endDate != "" {
-		if t, err := time.Parse("2006-01-02", endDate); err == nil {
-			t = t.Add(24 * time.Hour)
-			db = db.Where("starts_at <= ?", t)
-		}
-	}
-	db.Where("starts_at >= ?", today).Count(&todayAlerts)
+	todayAlertsQuery := applyFilters(db.Model(&models.Alert{}))
+	todayAlertsQuery.Where("starts_at >= ?", today).Count(&todayAlerts)
 	stats.TodayAlerts = todayAlerts
 
 	c.JSON(200, stats)
@@ -277,8 +240,8 @@ func (h *AlertHandler) GetSeverities(c *gin.Context) {
 		Where("labels IS NOT NULL").
 		Where("JSON_EXTRACT(labels, '$.quality') IS NOT NULL").
 		Where("JSON_EXTRACT(labels, '$.quality') != ''").
-		Distinct("JSON_EXTRACT(labels, '$.quality')").
-		Pluck("JSON_EXTRACT(labels, '$.quality')", &severities)
+		Distinct("JSON_UNQUOTE(JSON_EXTRACT(labels, '$.quality'))").
+		Pluck("JSON_UNQUOTE(JSON_EXTRACT(labels, '$.quality'))", &severities)
 
 	if result.Error != nil {
 		c.JSON(500, gin.H{"error": "Failed to query severities", "detail": result.Error.Error()})

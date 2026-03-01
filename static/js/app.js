@@ -8,7 +8,10 @@ let currentPage = 1;
 let currentPageSize = 20;
 let totalRecords = 0;
 
+const THEME_KEY = 'alertlogs_theme';
+
 document.addEventListener('DOMContentLoaded', () => {
+    initTheme();
     initAuth();
 
     document.getElementById('filterAlertname').addEventListener('keydown', e => {
@@ -20,6 +23,35 @@ document.addEventListener('DOMContentLoaded', () => {
         loadAlerts(currentPage, true);
     }, 30000);
 });
+
+/* ─── Theme Functions ─── */
+function initTheme() {
+    const saved = localStorage.getItem(THEME_KEY) || 'dark';
+    document.documentElement.setAttribute('data-theme', saved);
+    updateThemeIcons(saved);
+}
+
+function toggleTheme() {
+    const current = document.documentElement.getAttribute('data-theme') || 'dark';
+    const next = current === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    localStorage.setItem(THEME_KEY, next);
+    updateThemeIcons(next);
+}
+
+function updateThemeIcons(theme) {
+    const sun = document.querySelector('.icon-sun');
+    const moon = document.querySelector('.icon-moon');
+    if (sun && moon) {
+        if (theme === 'light') {
+            sun.style.display = 'none';
+            moon.style.display = 'block';
+        } else {
+            sun.style.display = 'block';
+            moon.style.display = 'none';
+        }
+    }
+}
 
 /* ─── Auth Functions ─── */
 function initAuth() {
@@ -144,7 +176,20 @@ function esc(s) {
 async function loadStats() {
     try {
         const headers = getAuthHeaders();
-        const r = await fetch(`${API}/alerts/stats`, { headers });
+        const status = document.getElementById('filterStatus')?.value;
+        const alertname = document.getElementById('filterAlertname')?.value.trim();
+        const quality = document.getElementById('filterSeverity')?.value;
+        const startDate = document.getElementById('filterStartDate')?.value;
+        const endDate = document.getElementById('filterEndDate')?.value;
+
+        const params = new URLSearchParams();
+        if (status) params.append('status', status);
+        if (alertname) params.append('alert_name', alertname);
+        if (quality) params.append('quality', quality);
+        if (startDate) params.append('start_date', startDate);
+        if (endDate) params.append('end_date', endDate);
+
+        const r = await fetch(`${API}/alerts/stats?${params}`, { headers });
         if (handleAuthError(r)) return;
         const d = await r.json();
 
@@ -159,6 +204,19 @@ async function loadStats() {
         });
         document.getElementById('firingAlerts').textContent = firing;
         document.getElementById('resolvedAlerts').textContent = resolved;
+
+        let p0 = 0, p2 = 0, p3 = 0, p9 = 0;
+        (d.by_quality || []).forEach(q => {
+            const val = (q.quality || '').toLowerCase();
+            if (val === 'p0' || val === '0') p0 = q.count;
+            else if (val === 'p2' || val === '2') p2 = q.count;
+            else if (val === 'p3' || val === '3') p3 = q.count;
+            else if (val === 'p9' || val === '9') p9 = q.count;
+        });
+        document.getElementById('p0Alerts').textContent = p0;
+        document.getElementById('p2Alerts').textContent = p2;
+        document.getElementById('p3Alerts').textContent = p3;
+        document.getElementById('p9Alerts').textContent = p9;
 
         document.getElementById('lastUpdate').textContent = '更新于 ' + new Date().toLocaleTimeString('zh-CN');
     } catch (e) { console.error('stats error', e); }
@@ -237,7 +295,7 @@ function renderTable(alerts) {
             <td class="id-cell">#${a.id}</td>
             <td class="alertname-cell">${esc(a.alert_name)}</td>
             <td>${statusBadge}</td>
-            <td class="instance-cell">${esc(a.instance) || '—'}</td>
+            <td class="summary-cell" title="${esc((a.annotations && a.annotations.summary) || a.instance || '')}">${esc((a.annotations && a.annotations.summary) || a.instance || '—')}</td>
             <td class="time-cell">${fmtDateTime(a.starts_at)}</td>
             <td class="time-cell">${a.ends_at ? fmtDateTime(a.ends_at) : '<span style="color:var(--text-subtle)">—</span>'}</td>
             <td>
@@ -291,14 +349,14 @@ async function showDetail(id) {
                 <div class="detail-section-title">基本信息</div>
                 <div class="detail-grid">
                     <div class="detail-field">
-                        <span class="detail-key">告警名称</span>
+                        <span class="detail-key">alertmanager</span>
                         <span class="detail-val"><strong>${esc(a.alert_name)}</strong></span>
                     </div>
                     <div class="detail-field">
                         <span class="detail-key">状态</span>
                         <span class="detail-val">${a.status === 'firing' ? '<span class="badge badge-firing">● Firing</span>' : '<span class="badge badge-resolved">✓ Resolved</span>'}</span>
                     </div>
-                    <div class="detail-field"><span class="detail-key">实例</span><span class="detail-val mono">${esc(a.instance) || '—'}</span></div>
+                    <div class="detail-field"><span class="detail-key">summary</span><span class="detail-val mono">${esc((a.annotations && a.annotations.summary) || a.instance || '—')}</span></div>
                     <div class="detail-field"><span class="detail-key">指纹 (Fingerprint)</span><span class="detail-val mono">${esc(a.fingerprint)}</span></div>
                     <div class="detail-field"><span class="detail-key">开始时间</span><span class="detail-val">${fmtDateTime(a.starts_at)}</span></div>
                     <div class="detail-field"><span class="detail-key">结束时间</span><span class="detail-val">${fmtDateTime(a.ends_at)}</span></div>

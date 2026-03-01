@@ -8,7 +8,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"gorm.io/gorm/clause"
+	"gorm.io/gorm"
 )
 
 type WebhookHandler struct{}
@@ -63,14 +63,33 @@ func (h *WebhookHandler) HandleWebhook(c *gin.Context) {
 
 		// 根据状态执行不同逻辑
 		if alert.Status == models.StatusFiring {
-			// Firing 状态：使用 Upsert
-			err := db.Clauses(clause.OnConflict{
-				Columns:   []clause.Column{{Name: "fingerprint"}, {Name: "starts_at"}},
-				DoUpdates: clause.AssignmentColumns([]string{"status", "ends_at", "labels", "annotations", "raw_content"}),
-			}).Create(&alert).Error
-
-			if err != nil {
-				log.Printf("[Webhook] Firing 存储失败 [%d/%d] %s: %v", i+1, len(payload.Alerts), alert.AlertName, err)
+			// 避免直接使用 OnConflict (UPSERT) 导致 MySQL 自增主键产生空洞
+			// 分为查询 -> 更新或插入 两步
+			var existing models.Alert
+			queryResult := db.Where("fingerprint = ? AND starts_at = ?", alert.Fingerprint, alert.StartsAt).First(&existing)
+			
+			if queryResult.Error == gorm.ErrRecordNotFound {
+				// 不存在，创建新记录
+				err := db.Create(&alert).Error
+				if err != nil {
+					log.Printf("[Webhook] Firing 存储失败 [%d/%d] %s: %v", i+1, len(payload.Alerts), alert.AlertName, err)
+					continue
+				}
+			} else if queryResult.Error == nil {
+				// 存在，更新记录
+				err := db.Model(&existing).Updates(map[string]interface{}{
+					"status":      alert.Status,
+					"ends_at":     alert.EndsAt,
+					"labels":      alert.Labels,
+					"annotations": alert.Annotations,
+					"raw_content": alert.RawContent,
+				}).Error
+				if err != nil {
+					log.Printf("[Webhook] Firing 更新失败 [%d/%d] %s: %v", i+1, len(payload.Alerts), alert.AlertName, err)
+					continue
+				}
+			} else {
+				log.Printf("[Webhook] 查询记录失败 [%d/%d] %s: %v", i+1, len(payload.Alerts), alert.AlertName, queryResult.Error)
 				continue
 			}
 		} else {
