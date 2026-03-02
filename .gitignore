@@ -1,6 +1,6 @@
 # 不要上传.env文件
 .env
 # 不要上传sisphus
-.sisphus/
+.sisyphus/
 # 不要上传release
 release/
